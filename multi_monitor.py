@@ -9,11 +9,11 @@ from typing import Dict, List, Optional
 
 try:
     from fastapi import FastAPI, HTTPException, Request, Form
-    from fastapi.responses import HTMLResponse, RedirectResponse
+    from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
     import uvicorn
     import tomli_w
 except ImportError:
-    print("[系统] 缺少必要依赖，请运行: pip install fastapi uvicorn tomli-w")
+    print("[系统] 缺少必要依赖，请运行: pip install fastapi uvicorn tomli-w python-multipart")
     sys.exit(1)
 
 # ================= 全局配置 =================
@@ -49,6 +49,13 @@ def ensure_log_dir(log_dir):
     if not os.path.exists(log_dir):
         os.makedirs(log_dir)
 
+def get_log_path(channel_info, config):
+    log_dir = config.get("log_dir", "logs")
+    c_id = channel_info["id"]
+    channel_name = channel_info.get("name", c_id)
+    safe_name = "".join([c for c in channel_name if c.isalnum() or c in (' ', '-', '_')]).strip()
+    return os.path.join(log_dir, f"{safe_name}_{c_id}.log")
+
 def parse_common_args(common_args_dict):
     args = []
     for key, value in common_args_dict.items():
@@ -67,16 +74,14 @@ def start_process(channel_info, config):
     if c_id in processes and processes[c_id].poll() is None:
         return
 
-    log_dir = config.get("log_dir", "logs")
     output_template = config.get("output_template", "")
     common_args = parse_common_args(config.get("common_args", {}))
+    log_file = get_log_path(channel_info, config)
     
-    ensure_log_dir(log_dir)
+    # 确保日志目录存在
+    ensure_log_dir(os.path.dirname(log_file))
     
     channel_name = channel_info.get("name", c_id)
-    safe_name = "".join([c for c in channel_name if c.isalnum() or c in (' ', '-', '_')]).strip()
-    log_file = os.path.join(log_dir, f"{safe_name}_{c_id}.log")
-    
     final_output = output_template.replace("%(uploader)s", channel_name)
     
     cmd = [PYTHON_EXECUTABLE, SCRIPT_PATH, c_id] + common_args + ["--output", final_output, "--log-file", log_file]
@@ -97,25 +102,16 @@ def stop_process(c_id):
         if p.poll() is None:
             print(f"[系统] 停止监控进程: {c_id}")
             p.terminate()
-            # p.wait() # 不阻塞等待
         del processes[c_id]
 
 # ================= 后台监控线程 =================
 
 def monitor_loop():
-    """
-    后台循环：
-    1. 检查 config.toml 中的 enabled 状态
-    2. 如果 enabled=True 且进程未运行，则启动
-    3. 如果 enabled=False 且进程在运行，则停止
-    4. 如果 enabled=True 且进程意外退出，则重启
-    """
     while True:
         try:
             config = load_config()
             channels = config.get("channels", [])
             
-            # 创建当前配置中存在的 ID 集合
             config_ids = set()
 
             for channel in channels:
@@ -125,19 +121,15 @@ def monitor_loop():
                 config_ids.add(c_id)
                 enabled = channel.get("enabled", False)
                 
-                # 检查进程状态
                 is_running = c_id in processes and processes[c_id].poll() is None
                 
                 if enabled:
                     if not is_running:
-                        # 需要启动（包含意外退出的情况，这里会自动重启）
                         start_process(channel, config)
                 else:
                     if is_running:
-                        # 需要停止
                         stop_process(c_id)
             
-            # 清理已经从配置中删除但还在运行的进程
             active_ids = list(processes.keys())
             for pid in active_ids:
                 if pid not in config_ids:
@@ -146,7 +138,7 @@ def monitor_loop():
         except Exception as e:
             print(f"[系统] 监控循环异常: {e}")
         
-        time.sleep(2) # 每2秒检查一次
+        time.sleep(2)
 
 # ================= Web 界面 =================
 
@@ -155,14 +147,12 @@ async def read_root():
     config = load_config()
     channels = config.get("channels", [])
     
-    # 生成 HTML 表格行
     rows = ""
     for c in channels:
         c_id = c.get("id")
         c_name = c.get("name", "")
         c_enabled = c.get("enabled", False)
         
-        # 检查实际运行状态
         is_running = c_id in processes and processes[c_id].poll() is None
         status_text = "🟢 运行中" if is_running else "🔴 已停止"
         if c_enabled and not is_running:
@@ -174,6 +164,7 @@ async def read_root():
         else:
             action_btn = f'<form action="/start/{c_id}" method="post" style="display:inline"><button type="submit">启动</button></form>'
             
+        log_btn = f'<a href="/logs/{c_id}" target="_blank"><button>日志</button></a>'
         delete_btn = f'<form action="/delete/{c_id}" method="post" style="display:inline" onsubmit="return confirm(\'确定删除吗？\');"><button type="submit">删除</button></form>'
         
         rows += f"""
@@ -183,6 +174,7 @@ async def read_root():
             <td>{status_text}</td>
             <td>
                 {action_btn}
+                {log_btn}
                 {delete_btn}
             </td>
         </tr>
@@ -192,22 +184,28 @@ async def read_root():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>直播监控管理</title>
+        <title>livestream_dl_webui</title>
         <meta charset="utf-8">
+        <style>
+            body {{ font-family: sans-serif; padding: 20px; }}
+            table {{ border-collapse: collapse; width: 100%; }}
+            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+            th {{ background-color: #f2f2f2; }}
+            button {{ padding: 5px 10px; margin-right: 5px; cursor: pointer; }}
+            input {{ padding: 5px; margin-right: 10px; }}
+        </style>
     </head>
     <body>
-        <h1>直播监控管理面板</h1>
-        
-        <div style="border: 1px solid #ccc; padding: 10px; margin-bottom: 20px;">
+        <div style="border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; background: #f9f9f9;">
             <h3>添加新频道</h3>
             <form action="/add" method="post">
-                <label>频道名称 (用户名): <input type="text" name="name" required></label>
-                <label>频道 ID: <input type="text" name="id" required></label>
+                <label>频道名称 (用户名): <input type="text" name="name" required placeholder="例如: 禰󠄀月くろす"></label>
+                <label>频道 ID: <input type="text" name="id" required placeholder="例如: UC..."></label>
                 <button type="submit">添加</button>
             </form>
         </div>
 
-        <table border="1" cellpadding="10" cellspacing="0">
+        <table>
             <thead>
                 <tr>
                     <th>名称</th>
@@ -221,11 +219,75 @@ async def read_root():
             </tbody>
         </table>
         
-        <p><i>刷新页面以查看最新状态</i></p>
+        <p><i>页面每 5 秒自动刷新一次</i></p>
+        <script>
+            setTimeout(function(){{
+               location.reload();
+            }}, 5000);
+        </script>
     </body>
     </html>
     """
     return html_content
+
+@app.get("/logs/{c_id}", response_class=HTMLResponse)
+async def view_logs(c_id: str):
+    config = load_config()
+    channels = config.get("channels", [])
+    
+    target_channel = None
+    for c in channels:
+        if c["id"] == c_id:
+            target_channel = c
+            break
+            
+    if not target_channel:
+        return HTMLResponse("<h1>未找到该频道</h1>", status_code=404)
+        
+    log_path = get_log_path(target_channel, config)
+    content = ""
+    
+    if os.path.exists(log_path):
+        try:
+            # 读取最后 200 行，避免文件过大
+            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+                content = "".join(lines[-200:]) if len(lines) > 200 else "".join(lines)
+        except Exception as e:
+            content = f"读取日志失败: {e}"
+    else:
+        content = "暂无日志文件 (可能尚未启动或正在初始化)"
+        
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>日志 - {target_channel.get('name')}</title>
+        <meta charset="utf-8">
+        <style>
+            body {{ background: #1e1e1e; color: #d4d4d4; font-family: monospace; padding: 20px; }}
+            pre {{ white-space: pre-wrap; word-wrap: break-word; }}
+            .header {{ margin-bottom: 20px; border-bottom: 1px solid #444; padding-bottom: 10px; }}
+            a {{ color: #569cd6; text-decoration: none; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h2>{target_channel.get('name')} ({c_id}) - 实时日志 (最后 200 行)</h2>
+            <a href="javascript:location.reload()">刷新</a> | <a href="/">返回首页</a>
+        </div>
+        <pre id="log-content">{content}</pre>
+        <script>
+            window.scrollTo(0, document.body.scrollHeight);
+            // 每 3 秒自动刷新
+            setTimeout(function(){{
+               location.reload();
+            }}, 3000);
+        </script>
+    </body>
+    </html>
+    """
+    return html
 
 @app.post("/add")
 async def add_channel(name: str = Form(...), id: str = Form(...)):
@@ -233,15 +295,12 @@ async def add_channel(name: str = Form(...), id: str = Form(...)):
     if "channels" not in config:
         config["channels"] = []
     
-    # 检查是否已存在
     for c in config["channels"]:
         if c["id"] == id:
-            # 更新名称
             c["name"] = name
             save_config(config)
             return RedirectResponse(url="/", status_code=303)
             
-    # 添加新频道，默认 enabled = False
     config["channels"].append({
         "id": id, 
         "name": name, 
@@ -280,8 +339,6 @@ async def stop_channel(c_id: str):
         save_config(config)
     return RedirectResponse(url="/", status_code=303)
 
-# ================= 启动入口 =================
-
 def stop_server(signum=None, frame=None):
     print("\n[系统] 正在关闭服务...")
     for c_id in list(processes.keys()):
@@ -292,7 +349,6 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, stop_server)
     signal.signal(signal.SIGTERM, stop_server)
     
-    # 启动后台监控线程
     t = threading.Thread(target=monitor_loop, daemon=True)
     t.start()
     
