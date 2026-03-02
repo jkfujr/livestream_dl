@@ -84,7 +84,7 @@ def start_process(channel_info, config):
     channel_name = channel_info.get("name", c_id)
     final_output = output_template.replace("%(uploader)s", channel_name)
     
-    cmd = [PYTHON_EXECUTABLE, SCRIPT_PATH, c_id] + common_args + ["--output", final_output, "--log-file", log_file]
+    cmd = [PYTHON_EXECUTABLE, SCRIPT_PATH, c_id] + common_args + ["--output", final_output, "--log-file", log_file, "--log-level", "DEBUG"]
     
     print(f"[系统] 启动监控进程: {channel_name} ({c_id})")
     
