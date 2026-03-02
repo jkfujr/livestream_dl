@@ -218,13 +218,6 @@ async def read_root():
                 {rows}
             </tbody>
         </table>
-        
-        <p><i>页面每 5 秒自动刷新一次</i></p>
-        <script>
-            setTimeout(function(){{
-               location.reload();
-            }}, 5000);
-        </script>
     </body>
     </html>
     """
