@@ -272,10 +272,6 @@ async def view_logs(c_id: str):
         <pre id="log-content">{content}</pre>
         <script>
             window.scrollTo(0, document.body.scrollHeight);
-            // 每 3 秒自动刷新
-            setTimeout(function(){{
-               location.reload();
-            }}, 3000);
         </script>
     </body>
     </html>
