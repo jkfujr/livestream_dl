@@ -1,0 +1,36 @@
+# ================= 全局配置 =================
+
+# 日志目录
+log_dir = "logs"
+
+# 输出模板 (其中的 %(uploader)s 将会被替换为 [[channels]] 中的 name)
+output_template = "/data1/录播/%(uploader)s/youtube/%(release_timestamp>%Y%m%d-%H%M%S)s_%(title)s【%(uploader)s】/%(epoch>%Y%m%d-%H%M%S)s_%(title)s.%(ext)s"
+
+# ================= 通用参数 =================
+# 这些参数将应用到所有频道
+# 格式为 [参数名, 参数值] 或 [参数名] (如果是开关类型)
+
+[common_args]
+monitor-channel = true
+wait-for-video = "120"
+resolution = "best"
+threads = "4"
+write-thumbnail = true
+embed-thumbnail = true
+write-info-json = true
+write-description = true
+live-chat = true
+temp-folder = "/data1/录播/TMP/"
+ytdlp-options = '{"extractor_args": {"youtubepot-bgutilhttp": {"base_url": ["http://127.0.0.1:4416"]}}}'
+no-console = true
+
+# ================= 频道列表 =================
+# 可以在此处添加多个频道
+
+[[channels]]
+id = "UCQhcvblledTueAYhPwVFoew"
+name = "禰󠄀月くろす"
+
+# [[channels]]
+# id = "UCxxxxxxxxxxxxxxxxx"
+# name = "示例频道2"
