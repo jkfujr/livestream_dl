@@ -1,4 +1,0 @@
-添加日志轮转功能
-
-1. 修改 runner.py：添加日志轮转相关的命令行参数 (--log-rotate-when, --log-rotate-interval, --log-backup-count)，并更新日志初始化逻辑。
-2. 修改 config.toml：在通用参数中添加默认的日志轮转配置（每天午夜轮转，保留30天）。
