@@ -1098,7 +1098,7 @@ class LiveStreamDownloader:
                     if info_dict['ext'] in ('mkv', 'mka') and file_names.get("info_json"):
                         if file_names.get("info_json").exists():
                             args.extend([
-                                '-attach', str(file_names.get('thumbnail').absolute()),
+                                '-attach', str(file_names.get('info_json').absolute()),
                                 f'-metadata:s:t:{attachments}', 'mimetype=application/json',
                                 f'-metadata:s:t:{attachments}', 'filename=info.json',
                                 ])                        
@@ -1115,6 +1115,7 @@ class LiveStreamDownloader:
                         attachments += 1
                     else: # For other formats, attach using disposition instead
                         args.extend(['-disposition:{0}'.format(thumbnail), 'attached_pic'])
+
                     
                 merged_file = FileInfo(base_output, file_type='merged')
                 try:                    
