@@ -23,6 +23,9 @@ live-chat = true
 temp-folder = "/data1/录播/TMP/"
 ytdlp-options = '{"extractor_args": {"youtubepot-bgutilhttp": {"base_url": ["http://127.0.0.1:4416"]}}}'
 no-console = true
+log-rotate-when = "midnight"
+log-rotate-interval = 1
+log-backup-count = 30
 
 # ================= 频道列表 =================
 # 可以在此处添加多个频道
