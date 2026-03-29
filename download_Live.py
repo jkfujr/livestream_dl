@@ -337,12 +337,13 @@ class LiveStreamDownloader:
                 format_extractor_options = {}
                 if options.get("ext", None):
                     format_extractor_options.update({"merge_output_format": options.get("ext", "").strip(" .")})
+                
                 formats_info = format_handler.getFormats(info_json=info_dict, resolution=resolution, sort=options.get('custom_sort', None), include_dash=(options.get("dash", False) and not options.get('recovery', False)), include_m3u8=options.get("m3u8", False), force_m3u8=options.get("force_m3u8", False), base_path=base_output, ydl_options=format_extractor_options)
 
                 stream_urls = []
                 #with open("data.json", "w", encoding="utf-8") as json_file:
                 #    json.dump(formats_info, json_file, indent=4)
-                
+
                 for format_info in formats_info.get('requested_formats') or [formats_info]:
                     format_obj: YoutubeURL.YoutubeURL = None
                     if format_info.get('protocol', "") == "http_dash_segments":
@@ -810,6 +811,7 @@ class LiveStreamDownloader:
             'outtmpl': base_output,
             'retries': 10,
             'logger': YTDLP_Auxiliary_logger(logger=logger),
+            'format': options.get("resolution", "bv+ba/best")
         }
         if options.get('proxy', None) is not None:
             ydl_opts['proxy'] = next(iter((options.get('proxy', None) or {}).values()), None)
@@ -890,7 +892,7 @@ class LiveStreamDownloader:
             def run(self, info):
                 super().run(info)           
 
-            def real_run_ffmpeg(self, input_path_opts, output_path_opts, *, expected_retcodes=(0,)):
+            def real_run_ffmpeg(self, input_path_opts, output_path_opts, *, merge=True, expected_retcodes=(0,)):
                 self.check_version()
 
                 oldest_mtime = min(
@@ -923,6 +925,9 @@ class LiveStreamDownloader:
                 self.write_debug(f'ffmpeg command line: {command_string}')
                 with open(self.ffmpeg_command_file, 'w', encoding="utf-8") as f:
                     f.write(command_string + "\n")
+
+                if not merge:
+                    return None
                 _, stderr, returncode = Popen.run(
                     cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
                 
@@ -1030,6 +1035,8 @@ class LiveStreamDownloader:
                 args = ['-c', 'copy']
                 audio_streams = 0
                 video_streams = 0
+                attachments = 0
+
                 for (i, fmt) in enumerate(info_dict['requested_formats']):
                     if fmt.get('acodec') != 'none':
                         args.extend(['-map', f'{i}:a:0'])
@@ -1077,9 +1084,16 @@ class LiveStreamDownloader:
                                 self.logger.critical(e)
                     
                         thumbnail = index    
-                        if not ext.lower() == ".mkv": # Don't add input file for mkv, use attach later
+                        if ext.lower() == ".mkv": # Don't add input file for mkv, use attach later
+                            # Use "guess_file_type" if function exists (added in 3.13), otherwise fall back to depreciated version
+                            guess = getattr(mimetypes, 'guess_file_type', mimetypes.guess_type)
+                            mime_type, _ = guess(file_names.get('thumbnail'))  
+                            args.extend(['-attach', str(file_names.get('thumbnail').absolute()), f"-metadata:s:t:{attachments}", "filename=cover{0}".format(file_names.get('thumbnail').suffix), f"-metadata:s:t:{attachments}", "mimetype={0}".format(mime_type or "application/octet-stream")])
+                            attachments += 1
+                        else:
                             files.append(str(file_names.get('thumbnail').absolute()))  
-                            args.extend(['-map', f'{index}'])                 
+                            args.extend(['-map', f'{index}:v:0', '-disposition:v:{0}'.format(video_streams), 'attached_pic'])     
+                            video_streams += 1           
                             index += 1
                     else:
                         self.logger.error("Thumbnail file: {0} is missing, continuing without embedding".format(file_names.get('thumbnail').absolute()))
@@ -1089,10 +1103,7 @@ class LiveStreamDownloader:
 
                 # From FFmpegMetadataPP
                 if livestream_merger._add_metadata:
-                    args.extend(item for pair in livestream_merger._get_metadata_opts(info_dict) for item in pair)
-
-
-                attachments = 0
+                    args.extend(item for pair in livestream_merger._get_metadata_opts(info_dict) for item in pair)                
                 
                 if livestream_merger._add_infojson:
                     if info_dict['ext'] in ('mkv', 'mka') and file_names.get("info_json"):
@@ -1104,25 +1115,18 @@ class LiveStreamDownloader:
                                 ])                        
                             attachments += 1
                         else:
-                            self.logger.error("Unable to find info.json file {0}".format(file_names.get("info_json")))               
-                
-                if thumbnail is not None:
-                    if ext.lower() == ".mkv": # If file will be mkv, attach file instead
-                        # Use "guess_file_type" if function exists (added in 3.13), otherwise fall back to depreciated version
-                        guess = getattr(mimetypes, 'guess_file_type', mimetypes.guess_type)
-                        mime_type, _ = guess(file_names.get('thumbnail'))  
-                        args.extend(['-attach', str(file_names.get('thumbnail').absolute()), f"-metadata:s:t:{attachments}", "filename=cover{0}".format(file_names.get('thumbnail').suffix), f"-metadata:s:t:{attachments}", "mimetype={0}".format(mime_type or "application/octet-stream")])
-                        attachments += 1
-                    else: # For other formats, attach using disposition instead
-                        args.extend(['-disposition:{0}'.format(thumbnail), 'attached_pic'])
+                            self.logger.error("Unable to find info.json file {0}".format(file_names.get("info_json")))             
 
-                    
                 merged_file = FileInfo(base_output, file_type='merged')
-                try:                    
-                    self.logger.log(setup_logger.VERBOSE_LEVEL_NUM, f"Merging streams into {merged_file}")
+                do_merge = options.get("merge", True)
+                try:            
+                    if do_merge:        
+                        self.logger.log(setup_logger.VERBOSE_LEVEL_NUM, f"Merging streams into {merged_file}")
+                    else:
+                        self.logger.log(setup_logger.VERBOSE_LEVEL_NUM, f"Writing ffmpeg command instead of merging")
                     livestream_merger.real_run_ffmpeg(
                         [(path, input_args) for path in files],
-                        [(str(merged_file.absolute()), args)])
+                        [(str(merged_file.absolute()), args)], merge=do_merge)
                 except subprocess.CalledProcessError as e:
                     self.logger.error(e.stderr)
                     self.logger.critical(e)
@@ -1131,20 +1135,27 @@ class LiveStreamDownloader:
                 except FFmpegPostProcessorError as e:
                     self.logger.exception(e)
                     raise e
-            
-                file_names["streams"][manifest]['merged'] = merged_file
-                self.logger.info("Successfully merged files into: {0}".format(file_names["streams"][manifest].get('merged').absolute()))
+
+                if do_merge:
+                    file_names["streams"][manifest]['merged'] = merged_file
+                    self.logger.info("Successfully merged files into: {0}".format(file_names["streams"][manifest].get('merged').absolute()))
                 
                 
                 # Remove temp video and audio files
-                if not (options.get('keep_ts_files') or options.get('keep_temp_files')):
+                if do_merge and not (options.get('keep_ts_files') or options.get('keep_temp_files')):
                     if file_names["streams"][manifest].get('video'): 
-                        self.logger.info("Removing {0}".format(file_names["streams"][manifest].get('video').absolute()))
-                        file_names["streams"][manifest].get('video').unlink(missing_ok=True)
+                        try:
+                            self.logger.info("Removing {0}".format(file_names["streams"][manifest].get('video').absolute()))
+                            file_names["streams"][manifest].get('video').unlink(missing_ok=True)
+                        except Exception as e:
+                            self.logger.exception("Unable to remove video .ts file")
                         file_names["streams"][manifest].pop('video',None)
                     if file_names["streams"][manifest].get('audio'): 
-                        self.logger.info("Removing {0}".format(file_names["streams"][manifest].get('audio').absolute()))
-                        file_names["streams"][manifest].get('audio').unlink(missing_ok=True)
+                        try:
+                            self.logger.info("Removing {0}".format(file_names["streams"][manifest].get('audio').absolute()))
+                            file_names["streams"][manifest].get('audio').unlink(missing_ok=True)
+                        except Exception as e:
+                            self.logger.exception("Unable to remove video .ts file")
                         file_names["streams"][manifest].pop('audio',None)       
             del ydl
         return file_names
@@ -1306,7 +1317,7 @@ class LiveStreamDownloader:
 
                     # Set last attempt time before and after to ensure that a time is captured on an error
                     self.last_refresh_attempt = time.monotonic()
-                    self.refresh_json, self.live_status = getUrls.get_Video_Info(id=id, wait=False, cookies=cookies, additional_options=additional_options, include_dash=include_dash, include_m3u8=include_m3u8, clean_info_dict=True, ignore_no_formats=ignore_no_formats, logger=logger)
+                    self.refresh_json, self.live_status = getUrls.get_Video_Info(id=id, wait=False, cookies=cookies, additional_options=additional_options, include_dash=include_dash, include_m3u8=include_m3u8, clean_info_dict=True, ignore_no_formats=ignore_no_formats, logger=logger,)
                     self.last_refresh_attempt = time.monotonic()
 
                     # Remove unnecessary items for info.json used purely for url refresh
@@ -1419,7 +1430,7 @@ class DownloadStream:
         self.include_m3u8 = self.options.get('include_m3u8', False)
         self.force_m3u8 = self.options.get('force_m3u8', False)
         
-        self.resolution = options.get("resolution", "best")
+        self.resolution = options.get("resolution", "bv+ba/best")
         self.yt_dlp_sort = self.options.get('custom_sort')
         
         self.id = info_dict.get('id')
@@ -1576,6 +1587,21 @@ class DownloadStream:
 
             thread_windows_size = self.max_workers*2
 
+            start_time = self.options.get('start_time')
+            end_time = self.options.get('end_time')
+            start_seg = 0
+            end_seg = float('inf')
+
+            # We only care about duration if start or end times are actually provided
+            needs_segment_calc = start_time is not None or end_time is not None
+
+            if needs_segment_calc and self.estimated_segment_duration > 0:
+                if start_time is not None:
+                    start_seg = int(start_time // self.estimated_segment_duration)
+                if end_time is not None:
+                    end_seg = -int(-end_time // self.estimated_segment_duration)
+                needs_segment_calc = False
+
             while True:     
                 self.check_kill(executor)
 
@@ -1591,7 +1617,35 @@ class DownloadStream:
                 if temp_stream_url != self.stream_url:
                     self.logger.debug("Stream URL has been updated, reseting segment retry counts")
                     segment_retries.clear()
-                del temp_stream_url
+                del temp_stream_url                
+
+                if needs_segment_calc and self.estimated_segment_duration <= 0:
+                    try:
+                        headers = self.get_Headers(url=self.stream_url, client=client)
+                        # Calculating duration once
+                        h_time = int(headers.get("X-Head-Time-Sec", 0))
+                        h_seq = int(headers.get("X-Head-Seqnum", 0))
+                        
+                        if h_seq > 0:
+                            self.estimated_segment_duration = h_time / h_seq
+                        
+                    except Exception as e:
+                        self.logger.warning(f"Unable to determine segment duration: {e}")
+
+                    # Check if we succeeded in getting a duration
+                    if self.estimated_segment_duration > 0:
+                        if start_time is not None:
+                            start_seg = int(start_time // self.estimated_segment_duration)
+                        if end_time is not None:
+                            end_seg = -int(-end_time // self.estimated_segment_duration)
+                        
+                        # Stop checking this block for the rest of the loop's life
+                        needs_segment_calc = False 
+                        self.logger.debug(f"Segments calculated: Start={start_seg}, End={end_seg}")
+                    else:
+                        self.logger.debug("Unable to determine segment duration, retrying...")
+                        self.smart_sleep(2)
+                        continue
 
                 if self.livestream_coordinator and self.livestream_coordinator.stats.get(self.type, None) is None:
                     self.livestream_coordinator.stats[self.type] = {}
@@ -1622,10 +1676,17 @@ class DownloadStream:
                             self.logger.debug("More segments available: {0}, previously {1}".format(head_seg_num, self.latest_sequence))                    
                             self.latest_sequence = head_seg_num
                             if self.livestream_coordinator:
-                                self.livestream_coordinator.stats[self.type]["latest_sequence"] = self.latest_sequence
+                                if start_seg != 0 or end_seg != float('inf'):
+                                    self.livestream_coordinator.stats[self.type]["latest_sequence"] = max(0, min(self.latest_sequence, end_seg) - start_seg)
+                                else:
+                                    self.livestream_coordinator.stats[self.type]["latest_sequence"] = self.latest_sequence
                             
                         if headers is not None and headers.get("X-Head-Time-Sec", None) is not None:
                             self.estimated_segment_duration = int(headers.get("X-Head-Time-Sec"))/self.latest_sequence
+                            if start_time is not None:
+                                start_seg = int(start_time // self.estimated_segment_duration)
+                            if end_time is not None:
+                                end_seg = -(int(-end_time // self.estimated_segment_duration))
                         
                         #if headers and headers.get('X-Bandwidth-Est', None):
                         #    stats[self.type]["estimated_size"] = int(headers.get('X-Bandwidth-Est', 0))
@@ -1666,12 +1727,14 @@ class DownloadStream:
                 optimistic_seg = max(self.latest_sequence, latest_downloaded_segment) + 1
 
                 # Check if optimistic segment has already downloaded or not
-                if optimistic_seg not in self.already_downloaded and self.segment_exists(optimistic_seg):
+                if start_seg <= optimistic_seg <= end_seg and optimistic_seg not in self.already_downloaded and self.segment_exists(optimistic_seg):
                     self.already_downloaded.add(optimistic_seg)
                     
                 segments_to_download = set(range(0, max(self.latest_sequence + 1, latest_downloaded_segment + 1))) - self.already_downloaded - set(self.pending_segments.keys()) - set(k for k, v in segment_retries.items() if v > self.fragment_retries)  
 
-                  
+                # Check if range has been limited
+                if start_seg != 0 or end_seg != float('inf'):
+                    segments_to_download = {x for x in segments_to_download if start_seg <= x <= end_seg}
                                         
                 # If segments remain to download, don't bother updating and wait for segment download to refresh values.
                 """
@@ -1687,7 +1750,7 @@ class DownloadStream:
 
                 # Add optimistic segment if conditions are right
                 # Only attempt to grab optimistic segment a number of times to ensure it does not cause a loop at the end of a stream
-                if (self.max_workers > 1 or not segments_to_download) and optimistic_fails < optimistic_fails_max and optimistic_seg not in self.already_downloaded and optimistic_seg not in self.pending_segments and optimistic_seg not in submitted_segments:
+                if (self.max_workers > 1 or not segments_to_download) and optimistic_fails < optimistic_fails_max and optimistic_seg not in self.already_downloaded and optimistic_seg not in self.pending_segments and optimistic_seg not in submitted_segments and start_seg <= optimistic_seg <= end_seg:
                     # Wait estimated fragment time +0.1s to make sure it would exist. Wait a minimum of 2s if no segments are to be submitted
                     if not segments_to_download:
                         self.smart_sleep(max(self.estimated_segment_duration, 2) + 0.1)
@@ -1703,6 +1766,10 @@ class DownloadStream:
                 if refresh != "IN_PROGRESS":
                     # If update has no segments and no segments are currently running, wait                              
                     if len(segments_to_download) <= 0 and len(future_to_seg) <= 0:                 
+
+                        if max(self.latest_sequence, latest_downloaded_segment) >= end_seg:
+                            self.logger.info("All segments in range downloaded, ending...")
+                            break
                         
                         self.logger.debug("No new fragments available for {0}, attempted {1} times...".format(self.format, wait))
                             
@@ -2566,8 +2633,7 @@ class DownloadStream:
                     self.live_status = "post_live"
             except getUrls.VideoUnavailableError as e:
                 self.logger.critical("Video Unavailable error: {0}".format(e))
-                if self.get_expire_time(self.stream_url) < time.time():
-                    raise TimeoutError("Video is unavailable and stream url for {0} has expired, unable to continue...".format(self.format))
+                
             except getUrls.VideoProcessedError as e:
                 # Livestream has been processed
                 self.logger.exception("Error refreshing URL: {0}".format(e))
@@ -2580,6 +2646,9 @@ class DownloadStream:
                 self.logger.exception("Error: {0}".format(e))                 
                 
         self.url_checked = time.time()
+
+        if self.get_expire_time(self.stream_url) < time.time():
+            raise TimeoutError("Video is unavailable and stream url for {0} has expired, unable to continue...".format(self.format))
 
         if self.live_status not in ['is_live', 'is_upcoming']:
             self.logger.debug("Livestream has ended.")

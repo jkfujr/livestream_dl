@@ -7,7 +7,12 @@ FROM gcr.io/distroless/cc AS cc
 # Stage 3: Final Image
 FROM python:3.13-alpine
 
+ARG PYTHONDONTWRITEBYTECODE=1
+
 WORKDIR /app
+
+ARG COMMIT_HASH
+ENV COMMIT_HASH=${COMMIT_HASH}
 
 # 1. Install Alpine-native tools (FFmpeg and Python use these)
 RUN apk add --no-cache ffmpeg

@@ -6,7 +6,7 @@ import time
 import argparse
 import threading
 from typing import Optional, Union, Dict, Any, Tuple
-from httpx import HTTPStatusError
+#from httpx import HTTPStatusError
 from collections import deque
 
 try:
@@ -70,24 +70,24 @@ class ExtractionLogger:
         # 1. Check Info-Level Keywords
         if any(k in msg_str for k in self.INFO_IGNORE_KEYWORDS):
             self.logger.info(msg)
-            return # Don't raise, just log
+            
         
-        if any(k in msg_str for k in self.INFO_RAISE_KEYWORDS):
+        elif any(k in msg_str for k in self.INFO_RAISE_KEYWORDS):
             self.logger.info(msg)
             raise yt_dlp.utils.DownloadError(msg_str)
 
         # 2. Check Warning-Level Keywords
-        if any(k in msg_str for k in self.WARNING_RAISE_KEYWORDS):
+        elif any(k in msg_str for k in self.WARNING_RAISE_KEYWORDS):
             self.logger.warning(msg)
             raise yt_dlp.utils.DownloadError(msg_str)
 
         # 3. Check Error-Level Keywords
-        if any(k in msg_str for k in self.ERROR_RAISE_KEYWORDS):
+        elif any(k in msg_str for k in self.ERROR_RAISE_KEYWORDS):
             self.logger.error(msg)
             raise yt_dlp.utils.DownloadError(msg_str)
 
-        # Fallback
-        self.logger.warning(msg)
+        else:
+            self.logger.warning(msg)
 
         # Loop protection
         if (not self.wait) and len(self.warning_history) >= self.repeat_threshold and len(set(self.warning_history)) == 1:
@@ -104,8 +104,7 @@ class VideoProcessedError(ValueError): pass
 class VideoUnavailableError(ValueError): pass
 class LivestreamError(TypeError): pass
 class MaxRetryExceededError(Exception): pass
-class RateLimitException(HTTPStatusError): pass
-class RateLimitException(HTTPStatusError): pass
+class RateLimitException(ConnectionRefusedError): pass
 
 class RepeatedWarningError(Exception):
     """Exception raised when a log message is repeated beyond the allowed threshold."""
@@ -255,9 +254,9 @@ def get_Video_Info(
             elif "sign in to confirm your age" in err_str or "age-restricted" in err_str:
                 raise VideoInaccessibleError("Video is age-restricted and requires valid cookies")
             elif "copyright claim" in err_str:
-                raise VideoUnavailableError("Video removed due to a copyright claim")
+                raise VideoInaccessibleError("Video removed due to a copyright claim")
             elif "video has been removed" in err_str or "incomplete youtube id" in err_str or "invalid video id" in err_str:
-                raise VideoUnavailableError("Video has been removed or ID is invalid")
+                raise VideoInaccessibleError("Video has been removed or ID is invalid")
             else:
                 raise e
         except RepeatedWarningError as e:

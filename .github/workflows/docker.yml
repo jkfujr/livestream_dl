@@ -21,6 +21,14 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
 
+      - name: Determine git sha to checkout
+        uses: haya14busa/action-cond@v1
+        id: gitsha
+        with:
+          cond: ${{ github.event_name == 'pull_request' }}
+          if_true: ${{ github.event.pull_request.head.sha }}
+          if_false: ${{ github.sha }}
+
       # --- NEW STEPS FOR MULTI-ARCH SUPPORT ---
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v2
@@ -58,7 +66,7 @@ jobs:
             type=sha
             
       - name: Build and publish
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v5
         with:
           context: .
           # ADDED: Platforms for multi-arch build
@@ -66,3 +74,5 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            COMMIT_HASH=${{ steps.gitsha.outputs.value }}
