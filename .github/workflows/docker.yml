@@ -2,9 +2,9 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main-web" ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ "main-web" ]
   schedule:
     - cron: "5 6 24 * *"
   workflow_dispatch:
@@ -55,10 +55,10 @@ jobs:
         uses: docker/metadata-action@v4
         with:
           images: |            
-            ghcr.io/canofsocks/livestream_dl
+            ghcr.io/${{ github.repository_owner }}/livestream_dl
           #  canofsocks/livestream_dl
           tags: |
-            type=edge,branch=main
+            type=edge,branch=main-web
             type=raw,value=latest
             type=schedule
             type=ref,event=branch

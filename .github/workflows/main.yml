@@ -3,7 +3,7 @@ name: Build & Release Multi-Platform
 on:
   push:
     branches:
-      - main
+      - main-web
   workflow_dispatch:
     inputs:
       tag:
