@@ -1,0 +1,23 @@
+log_dir = "logs"
+output_template = "/data1/录播/%(uploader)s/youtube/%(release_timestamp>%Y%m%d-%H%M%S)s_%(title)s【%(uploader)s】/%(epoch>%Y%m%d-%H%M%S)s_%(title)s.%(ext)s"
+channels = [
+    { id = "UCQhcvblledTueAYhPwVFoew", name = "禰󠄀月くろす", enabled = true },
+    { id = "UCDZ4KdlBrVLQNEaMR2A4FvQ", name = "エメ茶", enabled = true },
+]
+
+[common_args]
+monitor-channel = true
+wait-for-video = "120"
+resolution = "best"
+threads = "4"
+write-thumbnail = true
+embed-thumbnail = true
+write-info-json = true
+write-description = true
+live-chat = true
+temp-folder = "/data1/录播/TMP/"
+ytdlp-options = "{\"extractor_args\": {\"youtubepot-bgutilhttp\": {\"base_url\": [\"http://127.0.0.1:4416\"]}}}"
+no-console = true
+log-rotate-when = "midnight"
+log-rotate-interval = 1
+log-backup-count = 30
